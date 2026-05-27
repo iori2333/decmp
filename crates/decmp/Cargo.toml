@@ -1,0 +1,12 @@
+[package]
+name = "decmp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+decmp-core = { path = "../decmp-core" }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+walkdir = "2"
