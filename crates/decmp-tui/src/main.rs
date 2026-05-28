@@ -1,6 +1,13 @@
+mod action;
 mod app;
+mod context;
 mod event;
 mod highlight;
+mod layout;
+mod popup;
+mod popups;
+mod tile;
+mod tiles;
 mod tree;
 mod ui;
 
@@ -77,7 +84,7 @@ fn run_app(
 
     event::handle_events(app)?;
 
-    if app.should_quit {
+    if app.ctx.should_quit {
       return Ok(());
     }
   }
