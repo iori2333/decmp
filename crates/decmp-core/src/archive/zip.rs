@@ -25,11 +25,35 @@ fn convert_zip_error(e: zip::result::ZipError) -> DecmpError {
 
 pub struct ZipHandler;
 
+fn decode_entry_name(raw: &[u8], enc: Option<&str>) -> String {
+  if let Some(encoding_name) = enc {
+    encoding::decode_filename(raw, encoding_name).unwrap_or_else(|_| encoding::try_decode_utf8(raw))
+  } else {
+    encoding::try_decode_utf8(raw)
+  }
+}
+
+fn detect_best_encoding<'a>(raw_names: &[&[u8]], enc: Option<&'a str>) -> Option<&'a str> {
+  if enc.is_some() {
+    return enc;
+  }
+  encoding::auto_detect_encoding(raw_names)
+}
+
 fn compression_method(level: Option<u32>) -> CompressionMethod {
   match level {
     Some(0) => CompressionMethod::Stored,
     _ => CompressionMethod::Deflated,
   }
+}
+
+struct RawEntry {
+  name_raw: Vec<u8>,
+  size: u64,
+  compressed_size: u64,
+  is_dir: bool,
+  method: String,
+  modified: Option<String>,
 }
 
 impl ArchiveHandler for ZipHandler {
@@ -41,9 +65,11 @@ impl ArchiveHandler for ZipHandler {
   ) -> Result<Vec<ArchiveEntry>> {
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
-    let mut entries = Vec::new();
+    let total = archive.len();
 
-    for i in 0..archive.len() {
+    let mut raw_entries: Vec<RawEntry> = Vec::with_capacity(total);
+
+    for i in 0..total {
       let entry = if let Some(pw) = password {
         archive
           .by_index_decrypt(i, pw.as_bytes())
@@ -51,24 +77,30 @@ impl ArchiveHandler for ZipHandler {
       } else {
         archive.by_index(i).map_err(convert_zip_error)?
       };
-      let name = if let Some(encoding_name) = enc {
-        let raw = entry.name_raw();
-        encoding::decode_filename(raw, encoding_name)?
-      } else {
-        entry.name().to_string()
-      };
-
-      let modified = entry.last_modified().map(|dt| format!("{dt}"));
-
-      entries.push(ArchiveEntry {
-        name,
+      raw_entries.push(RawEntry {
+        name_raw: entry.name_raw().to_vec(),
         size: entry.size(),
         compressed_size: entry.compressed_size(),
         is_dir: entry.is_dir(),
         method: format!("{:?}", entry.compression()),
-        modified,
+        modified: entry.last_modified().map(|dt| format!("{dt}")),
       });
     }
+
+    let raw_refs: Vec<&[u8]> = raw_entries.iter().map(|e| e.name_raw.as_slice()).collect();
+    let effective_enc = detect_best_encoding(&raw_refs, enc);
+
+    let entries = raw_entries
+      .into_iter()
+      .map(|e| ArchiveEntry {
+        name: decode_entry_name(&e.name_raw, effective_enc),
+        size: e.size,
+        compressed_size: e.compressed_size,
+        is_dir: e.is_dir,
+        method: e.method,
+        modified: e.modified,
+      })
+      .collect();
 
     Ok(entries)
   }
@@ -84,8 +116,34 @@ impl ArchiveHandler for ZipHandler {
 
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
+    let total = archive.len();
 
-    for i in 0..archive.len() {
+    let mut raw_entries: Vec<(Vec<u8>, bool, Option<u32>)> = Vec::with_capacity(total);
+
+    for i in 0..total {
+      let entry = if let Some(pw) = password {
+        archive
+          .by_index_decrypt(i, pw.as_bytes())
+          .map_err(convert_zip_error)?
+      } else {
+        archive.by_index(i).map_err(convert_zip_error)?
+      };
+
+      #[cfg(unix)]
+      let unix_mode = entry.unix_mode();
+      #[cfg(not(unix))]
+      let unix_mode = None;
+
+      raw_entries.push((entry.name_raw().to_vec(), entry.is_dir(), unix_mode));
+    }
+
+    let raw_refs: Vec<&[u8]> = raw_entries.iter().map(|(n, ..)| n.as_slice()).collect();
+    let effective_enc = detect_best_encoding(&raw_refs, enc);
+
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
+
+    for (i, (raw_name, is_dir, unix_mode)) in raw_entries.iter().enumerate() {
       let mut entry = if let Some(pw) = password {
         archive
           .by_index_decrypt(i, pw.as_bytes())
@@ -94,16 +152,10 @@ impl ArchiveHandler for ZipHandler {
         archive.by_index(i).map_err(convert_zip_error)?
       };
 
-      let name = if let Some(encoding_name) = enc {
-        let raw = entry.name_raw();
-        encoding::decode_filename(raw, encoding_name)?
-      } else {
-        entry.name().to_string()
-      };
-
+      let name = decode_entry_name(raw_name, effective_enc);
       let out_path = dest.join(&name);
 
-      if entry.is_dir() {
+      if *is_dir {
         ensure_dir(&out_path)?;
       } else {
         if let Some(parent) = out_path.parent() {
@@ -116,8 +168,8 @@ impl ArchiveHandler for ZipHandler {
       #[cfg(unix)]
       {
         use std::os::unix::fs::PermissionsExt;
-        if let Some(mode) = entry.unix_mode() {
-          std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode))?;
+        if let Some(mode) = unix_mode {
+          std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(*mode))?;
         }
       }
     }
@@ -220,8 +272,33 @@ impl ArchiveHandler for ZipHandler {
 
     let file = File::open(archive_path)?;
     let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
+    let total = archive.len();
 
-    for i in 0..archive.len() {
+    let mut raw_entries: Vec<(Vec<u8>, bool)> = Vec::with_capacity(total);
+
+    for i in 0..total {
+      let entry = if let Some(pw) = password {
+        archive
+          .by_index_decrypt(i, pw.as_bytes())
+          .map_err(convert_zip_error)?
+      } else {
+        archive.by_index(i).map_err(convert_zip_error)?
+      };
+      raw_entries.push((entry.name_raw().to_vec(), entry.is_dir()));
+    }
+
+    let raw_refs: Vec<&[u8]> = raw_entries.iter().map(|(n, ..)| n.as_slice()).collect();
+    let effective_enc = detect_best_encoding(&raw_refs, enc);
+
+    let file = File::open(archive_path)?;
+    let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
+
+    for (i, (raw_name, is_dir)) in raw_entries.iter().enumerate() {
+      let name = decode_entry_name(raw_name, effective_enc);
+      if !wanted.contains(name.as_str()) {
+        continue;
+      }
+
       let mut entry = if let Some(pw) = password {
         archive
           .by_index_decrypt(i, pw.as_bytes())
@@ -230,19 +307,8 @@ impl ArchiveHandler for ZipHandler {
         archive.by_index(i).map_err(convert_zip_error)?
       };
 
-      let name = if let Some(encoding_name) = enc {
-        let raw = entry.name_raw();
-        encoding::decode_filename(raw, encoding_name)?
-      } else {
-        entry.name().to_string()
-      };
-
-      if !wanted.contains(name.as_str()) {
-        continue;
-      }
-
       let out_path = dest.join(&name);
-      if entry.is_dir() {
+      if *is_dir {
         ensure_dir(&out_path)?;
       } else {
         if let Some(parent) = out_path.parent() {
@@ -265,24 +331,38 @@ impl ArchiveHandler for ZipHandler {
   ) -> Result<Vec<u8>> {
     let file = File::open(archive_path)?;
     let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
+    let total = archive.len();
 
-    for i in 0..archive.len() {
-      let mut entry = if let Some(pw) = password {
+    let mut raw_names: Vec<Vec<u8>> = Vec::with_capacity(total);
+
+    for i in 0..total {
+      let entry = if let Some(pw) = password {
         archive
           .by_index_decrypt(i, pw.as_bytes())
           .map_err(convert_zip_error)?
       } else {
         archive.by_index(i).map_err(convert_zip_error)?
       };
+      raw_names.push(entry.name_raw().to_vec());
+    }
 
-      let name = if let Some(encoding_name) = enc {
-        let raw = entry.name_raw();
-        encoding::decode_filename(raw, encoding_name)?
-      } else {
-        entry.name().to_string()
-      };
+    let raw_refs: Vec<&[u8]> = raw_names.iter().map(|v| v.as_slice()).collect();
+    let effective_enc = detect_best_encoding(&raw_refs, enc);
+
+    let file = File::open(archive_path)?;
+    let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
+
+    for (i, raw_name) in raw_names.iter().enumerate() {
+      let name = decode_entry_name(raw_name, effective_enc);
 
       if name == entry_name {
+        let mut entry = if let Some(pw) = password {
+          archive
+            .by_index_decrypt(i, pw.as_bytes())
+            .map_err(convert_zip_error)?
+        } else {
+          archive.by_index(i).map_err(convert_zip_error)?
+        };
         let mut buf = Vec::new();
         if let Some(limit) = max_bytes {
           let mut limited = (&mut entry).take(limit as u64);

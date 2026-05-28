@@ -1,3 +1,4 @@
+mod encoding;
 mod extract;
 mod navigation;
 mod password;
@@ -15,7 +16,8 @@ use decmp_core::{ArchiveEntry, ArchiveHandler};
 
 use crate::tree::DirTree;
 
-pub const MAX_PREVIEW_BYTES: usize = 64 * 1024;
+pub const MAX_PREVIEW_BYTES: usize = 128 * 1024;
+pub const MAX_PREVIEW_CHARS: usize = 32 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
@@ -24,6 +26,7 @@ pub enum Mode {
   ExtractDest,
   Properties,
   Help,
+  Encoding,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +50,7 @@ pub struct SidePreview {
   pub is_dir: bool,
   pub is_truncated: bool,
   pub dir_entries: Vec<String>,
+  pub encoding_detected: Option<String>,
 }
 
 pub struct ArchiveState {
@@ -78,6 +82,8 @@ pub struct App {
   pub mode: Mode,
   pub password: Option<String>,
   pub password_input: String,
+  pub encoding: Option<String>,
+  pub encoding_input: String,
   pub extract_dest_input: String,
   pub status_msg: Option<String>,
   pub should_quit: bool,
@@ -124,6 +130,8 @@ impl App {
       mode: Mode::Browse,
       password: None,
       password_input: String::new(),
+      encoding: None,
+      encoding_input: String::new(),
       extract_dest_input: String::from("."),
       status_msg: None,
       should_quit: false,

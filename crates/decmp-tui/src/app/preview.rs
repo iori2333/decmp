@@ -1,8 +1,8 @@
-use crate::app::{App, MAX_PREVIEW_BYTES, SidePreview};
+use crate::app::{App, MAX_PREVIEW_BYTES, MAX_PREVIEW_CHARS, SidePreview};
 use crate::tree::DirNode;
 use crate::ui::format_size;
 
-use decmp_core::DecmpError;
+use decmp_core::{DecmpError, auto_detect_encoding};
 
 impl SidePreview {
   fn binary(name: &str) -> Self {
@@ -17,12 +17,14 @@ impl SidePreview {
     lines: Vec<String>,
     highlighted: Vec<Vec<ratatui::text::Span<'static>>>,
     is_truncated: bool,
+    encoding_detected: Option<String>,
   ) -> Self {
     Self {
       name: name.to_string(),
       lines,
       highlighted,
       is_truncated,
+      encoding_detected,
       ..Default::default()
     }
   }
@@ -40,6 +42,24 @@ impl SidePreview {
       ..Default::default()
     }
   }
+}
+
+fn decode_preview_bytes(bytes: &[u8]) -> (String, Option<String>) {
+  if bytes.is_empty() {
+    return (String::new(), None);
+  }
+
+  if std::str::from_utf8(bytes).is_ok() {
+    return (String::from_utf8_lossy(bytes).into_owned(), None);
+  }
+
+  if let Some(enc) = auto_detect_encoding(&[bytes])
+    && let Ok(decoded) = decmp_core::encoding::decode_filename(bytes, enc)
+  {
+    return (decoded, Some(enc.to_string()));
+  }
+
+  (String::from_utf8_lossy(bytes).into_owned(), None)
 }
 
 impl App {
@@ -62,26 +82,31 @@ impl App {
       &self.archive.path,
       &full_name,
       self.password.as_deref(),
-      None,
+      self.encoding.as_deref(),
       Some(MAX_PREVIEW_BYTES),
     ) {
       Ok(bytes) => {
-        let is_truncated = bytes.len() >= MAX_PREVIEW_BYTES;
+        let is_byte_truncated = bytes.len() >= MAX_PREVIEW_BYTES;
 
         if crate::tree::is_binary_content(&bytes) {
           self.cache_and_show_preview(full_name, SidePreview::binary(&name));
           return;
         }
 
-        let preview = match std::str::from_utf8(&bytes) {
-          Ok(text) => {
-            let lines: Vec<String> = text.lines().map(String::from).collect();
-            let highlighted = crate::highlight::highlight_text(text, &name);
-            SidePreview::file(&name, lines, highlighted, is_truncated)
-          }
-          Err(_) => SidePreview::binary(&name),
+        let (text, enc_detected) = decode_preview_bytes(&bytes);
+
+        let text = if text.chars().count() > MAX_PREVIEW_CHARS {
+          (text.chars().take(MAX_PREVIEW_CHARS).collect(), true)
+        } else {
+          (text, is_byte_truncated)
         };
-        self.cache_and_show_preview(full_name, preview);
+
+        let lines: Vec<String> = text.0.lines().map(String::from).collect();
+        let highlighted = crate::highlight::highlight_text(&text.0, &name);
+        self.cache_and_show_preview(
+          full_name,
+          SidePreview::file(&name, lines, highlighted, text.1, enc_detected),
+        );
       }
       Err(DecmpError::PasswordRequired) | Err(DecmpError::WrongPassword) => {
         self.password_input.clear();

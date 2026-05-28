@@ -7,11 +7,11 @@ impl App {
     self.password = Some(self.password_input.clone());
     match self.pending_action.clone() {
       Some(super::PendingAction::InitialLoad) => {
-        match self
-          .archive
-          .handler
-          .list(&self.archive.path, self.password.as_deref(), None)
-        {
+        match self.archive.handler.list(
+          &self.archive.path,
+          self.password.as_deref(),
+          self.encoding.as_deref(),
+        ) {
           Ok(entries) => {
             self.pending_action = None;
             self.reload_entries(entries);

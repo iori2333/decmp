@@ -28,6 +28,7 @@ fn handle_key(app: &mut App, code: KeyCode) {
       |a| &mut a.extract_dest_input,
       App::confirm_extract,
     ),
+    Mode::Encoding => handle_input(app, code, |a| &mut a.encoding_input, App::submit_encoding),
     Mode::Properties => {
       if dismiss_key(code) {
         app.mode = Mode::Browse;
@@ -101,6 +102,7 @@ fn handle_browse(app: &mut App, code: KeyCode) {
     KeyCode::Char('e') => app.extract_selected(),
     KeyCode::Char('E') => app.extract_all(),
     KeyCode::Char('p') => app.show_properties(),
+    KeyCode::Char('o') => app.open_encoding(),
     KeyCode::Char('?') => {
       app.help_scroll = 0;
       app.mode = Mode::Help;

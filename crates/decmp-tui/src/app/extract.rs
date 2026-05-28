@@ -45,13 +45,15 @@ impl App {
         &refs,
         &dest,
         self.password.as_deref(),
-        None,
+        self.encoding.as_deref(),
       )
     } else {
-      self
-        .archive
-        .handler
-        .extract(&self.archive.path, &dest, self.password.as_deref(), None)
+      self.archive.handler.extract(
+        &self.archive.path,
+        &dest,
+        self.password.as_deref(),
+        self.encoding.as_deref(),
+      )
     };
 
     match result {

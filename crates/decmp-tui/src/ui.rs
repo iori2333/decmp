@@ -29,6 +29,7 @@ fn draw_popup(f: &mut Frame, app: &mut App) {
     Mode::ExtractDest => draw_extract_dest_popup(f, app),
     Mode::Properties => draw_properties_popup(f, app),
     Mode::Help => draw_help_popup(f, app),
+    Mode::Encoding => draw_encoding_popup(f, app),
     Mode::Browse => {}
   }
 }
@@ -109,8 +110,10 @@ fn draw_file_list(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn clip_str(s: &str, scroll: usize) -> String {
-  let scroll = scroll.min(s.len().saturating_sub(1));
-  s[scroll..].to_string()
+  if scroll == 0 {
+    return s.to_string();
+  }
+  s.chars().skip(scroll).collect()
 }
 
 // ── Side preview ───────────────────────────────────────────────
@@ -119,12 +122,14 @@ fn draw_side_preview(f: &mut Frame, app: &mut App, area: Rect) {
   let preview = &app.preview.content;
 
   let title = if preview.name.is_empty() {
-    " Preview "
+    " Preview ".to_string()
+  } else if let Some(ref enc) = preview.encoding_detected {
+    format!(" {} [{enc}] ", preview.name)
   } else {
-    &preview.name
+    format!(" {} ", preview.name)
   };
   let block = Block::default()
-    .title(format!(" {title} "))
+    .title(title)
     .borders(Borders::ALL)
     .border_style(focus_style(app.nav.focus == Focus::Right));
 
@@ -244,6 +249,21 @@ fn draw_extract_dest_popup(f: &mut Frame, app: &App) {
   );
 }
 
+fn draw_encoding_popup(f: &mut Frame, app: &App) {
+  let area = centered_rect(60, 15, f.area());
+  f.render_widget(Clear, area);
+  let block = Block::default()
+    .title(" Change Encoding (blank=auto) ")
+    .borders(Borders::ALL)
+    .fg(Color::Magenta);
+  let current = app.encoding.as_deref().unwrap_or("auto");
+  let hint = format!(
+    "Current: {}\nInput (e.g. gbk, shift_jis, utf-8):\n> {}",
+    current, app.encoding_input
+  );
+  f.render_widget(Paragraph::new(hint).block(block).fg(Color::White), area);
+}
+
 fn draw_properties_popup(f: &mut Frame, app: &App) {
   let area = centered_rect(60, 40, f.area());
   f.render_widget(Clear, area);
@@ -290,6 +310,7 @@ fn draw_help_popup(f: &mut Frame, app: &mut App) {
     Line::from("  e             Extract selected file"),
     Line::from("  E             Extract all files"),
     Line::from("  p             Show file properties"),
+    Line::from("  o             Change filename encoding"),
     Line::from(""),
     heading_line(" Preview", Color::Yellow),
     Line::from("  Directories: shown automatically"),
@@ -334,7 +355,7 @@ fn prop_line<'a>(label: &'a str, val: &'a str) -> Line<'a> {
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
   let msg = app.status_msg.as_deref().unwrap_or(
-        "[Enter]Open/Preview [e]Extract [E]All [Tab]Focus [P/U]Scroll [?]Help [q]Quit  | Click: select · Click ..: back"
+         "[Enter]Open/Preview [e]Extract [E]All [o]Encoding [Tab]Focus [P/U]Scroll [?]Help [q]Quit  | Click: select · Click ..: back"
     );
   let style = if app.status_msg.is_some() {
     Style::default().fg(Color::Yellow)

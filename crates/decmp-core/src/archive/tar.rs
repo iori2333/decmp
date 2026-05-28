@@ -42,6 +42,22 @@ fn open_tar_reader(path: &Path, format: &Format) -> Result<Box<dyn Read>> {
   }
 }
 
+fn decode_tar_name(raw: &[u8], enc: Option<&str>) -> String {
+  if let Some(encoding_name) = enc {
+    encoding::decode_filename(raw, encoding_name).unwrap_or_else(|_| encoding::try_decode_utf8(raw))
+  } else {
+    encoding::try_decode_utf8(raw)
+  }
+}
+
+fn strip_dot_slash(name: &str) -> String {
+  if let Some(stripped) = name.strip_prefix("./") {
+    stripped.to_string()
+  } else {
+    name.to_string()
+  }
+}
+
 fn append_sources(builder: &mut Builder<impl Write>, sources: &[PathBuf]) -> Result<()> {
   for src in sources {
     if src.is_dir() {
@@ -98,17 +114,11 @@ impl ArchiveHandler for TarHandler {
   ) -> Result<Vec<ArchiveEntry>> {
     let reader = open_tar_reader(path, &self.format)?;
     let mut archive = Archive::new(reader);
-    let mut entries = Vec::new();
+    let mut raw_entries: Vec<(Vec<u8>, u64, bool, Option<String>)> = Vec::new();
 
     for entry in archive.entries()? {
       let entry = entry?;
       let name_bytes = entry.path_bytes().into_owned();
-      let name = if let Some(enc) = encoding {
-        encoding::decode_filename(&name_bytes, enc)?
-      } else {
-        String::from_utf8_lossy(&name_bytes).into_owned()
-      };
-
       let modified = entry.header().mtime().ok().and_then(|secs| {
         std::time::UNIX_EPOCH
           .checked_add(std::time::Duration::from_secs(secs))
@@ -117,16 +127,32 @@ impl ArchiveHandler for TarHandler {
             dt.format("%Y-%m-%d %H:%M").to_string()
           })
       });
+      raw_entries.push((
+        name_bytes,
+        entry.size(),
+        entry.header().entry_type().is_dir(),
+        modified,
+      ));
+    }
 
-      entries.push(ArchiveEntry {
-        name,
-        size: entry.size(),
+    let raw_refs: Vec<&[u8]> = raw_entries.iter().map(|(n, ..)| n.as_slice()).collect();
+    let effective_enc = if encoding.is_some() {
+      encoding
+    } else {
+      crate::encoding::auto_detect_encoding(&raw_refs)
+    };
+
+    let entries = raw_entries
+      .into_iter()
+      .map(|(name_bytes, size, is_dir, modified)| ArchiveEntry {
+        name: decode_tar_name(&name_bytes, effective_enc),
+        size,
         compressed_size: 0,
-        is_dir: entry.header().entry_type().is_dir(),
+        is_dir,
         method: self.format.to_string(),
         modified,
-      });
-    }
+      })
+      .collect();
 
     Ok(entries)
   }
@@ -143,7 +169,24 @@ impl ArchiveHandler for TarHandler {
     let reader = open_tar_reader(path, &self.format)?;
     let mut archive = Archive::new(reader);
 
-    if let Some(enc) = encoding {
+    let mut raw_names: Vec<Vec<u8>> = Vec::new();
+    {
+      let mut entries = archive.entries()?;
+      while let Some(Ok(entry)) = entries.next() {
+        raw_names.push(entry.path_bytes().into_owned());
+      }
+    }
+
+    let raw_refs: Vec<&[u8]> = raw_names.iter().map(|v| v.as_slice()).collect();
+    let effective_enc = if encoding.is_some() {
+      encoding
+    } else {
+      crate::encoding::auto_detect_encoding(&raw_refs)
+    };
+
+    if let Some(enc) = effective_enc {
+      let reader = open_tar_reader(path, &self.format)?;
+      let mut archive = Archive::new(reader);
       let mut entries = archive.entries()?;
       while let Some(Ok(mut entry)) = entries.next() {
         let raw_name = entry.path_bytes().into_owned();
@@ -157,6 +200,8 @@ impl ArchiveHandler for TarHandler {
         entry.unpack(&out_path)?;
       }
     } else {
+      let reader = open_tar_reader(path, &self.format)?;
+      let mut archive = Archive::new(reader);
       archive.unpack(dest)?;
     }
 
@@ -250,17 +295,29 @@ impl ArchiveHandler for TarHandler {
     let reader = open_tar_reader(archive_path, &self.format)?;
     let mut archive = Archive::new(reader);
 
+    let mut raw_names: Vec<Vec<u8>> = Vec::new();
+    {
+      let mut entries = archive.entries()?;
+      while let Some(Ok(entry)) = entries.next() {
+        raw_names.push(entry.path_bytes().into_owned());
+      }
+    }
+
+    let raw_refs: Vec<&[u8]> = raw_names.iter().map(|v| v.as_slice()).collect();
+    let effective_enc = if encoding.is_some() {
+      encoding
+    } else {
+      crate::encoding::auto_detect_encoding(&raw_refs)
+    };
+
+    let reader = open_tar_reader(archive_path, &self.format)?;
+    let mut archive = Archive::new(reader);
+
     let mut entries_iter = archive.entries()?;
     while let Some(Ok(mut entry)) = entries_iter.next() {
       let name_bytes = entry.path_bytes().into_owned();
-      let mut name = if let Some(enc) = encoding {
-        encoding::decode_filename(&name_bytes, enc)?
-      } else {
-        String::from_utf8_lossy(&name_bytes).into_owned()
-      };
-      if let Some(stripped) = name.strip_prefix("./") {
-        name = stripped.to_string();
-      }
+      let mut name = decode_tar_name(&name_bytes, effective_enc);
+      name = strip_dot_slash(&name);
 
       if !wanted.contains(name.as_str()) {
         continue;
@@ -286,17 +343,29 @@ impl ArchiveHandler for TarHandler {
     let reader = open_tar_reader(archive_path, &self.format)?;
     let mut archive = Archive::new(reader);
 
+    let mut raw_names: Vec<Vec<u8>> = Vec::new();
+    {
+      let mut entries = archive.entries()?;
+      while let Some(Ok(entry)) = entries.next() {
+        raw_names.push(entry.path_bytes().into_owned());
+      }
+    }
+
+    let raw_refs: Vec<&[u8]> = raw_names.iter().map(|v| v.as_slice()).collect();
+    let effective_enc = if encoding.is_some() {
+      encoding
+    } else {
+      crate::encoding::auto_detect_encoding(&raw_refs)
+    };
+
+    let reader = open_tar_reader(archive_path, &self.format)?;
+    let mut archive = Archive::new(reader);
+
     let mut entries_iter = archive.entries()?;
     while let Some(Ok(mut entry)) = entries_iter.next() {
       let name_bytes = entry.path_bytes().into_owned();
-      let mut name = if let Some(enc) = encoding {
-        encoding::decode_filename(&name_bytes, enc)?
-      } else {
-        String::from_utf8_lossy(&name_bytes).into_owned()
-      };
-      if let Some(stripped) = name.strip_prefix("./") {
-        name = stripped.to_string();
-      }
+      let mut name = decode_tar_name(&name_bytes, effective_enc);
+      name = strip_dot_slash(&name);
 
       if name == entry_name {
         let mut buf = Vec::new();
