@@ -309,10 +309,13 @@ impl App {
           *active_popup = None;
         }
         Action::StartExtract { full_name } => {
-          ctx.pending_extract_entries = Some(vec![full_name]);
+          ctx.pending_extract_entries = Some(vec![full_name.clone()]);
           ctx.mode = Mode::ExtractDest;
           let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-          *active_popup = Some(Box::new(popups::extract_dest::ExtractDestPopup::new(cwd)));
+          let default_dest = cwd.join(&full_name);
+          *active_popup = Some(Box::new(popups::extract_dest::ExtractDestPopup::new(
+            default_dest,
+          )));
         }
         Action::StartExtractAll => {
           ctx.pending_extract_entries = None;
@@ -323,6 +326,11 @@ impl App {
         Action::ConfirmExtract { dest } => {
           *extract_dest_for_retry = Some(dest.clone());
           Self::perform_extraction(ctx, &dest);
+          if ctx.mode == Mode::Password {
+            *active_popup = Some(Box::new(popups::password::PasswordPopup::new()));
+          } else {
+            *active_popup = None;
+          }
         }
         Action::RequestEncodingInput => {
           ctx.mode = Mode::Encoding;
@@ -437,7 +445,37 @@ impl App {
     ))
   }
 
-  fn perform_extraction(ctx: &mut AppContext, dest: &PathBuf) {
+  fn perform_extraction(ctx: &mut AppContext, dest: &Path) {
+    if let Some(ref entries) = ctx.pending_extract_entries {
+      let refs: Vec<&str> = entries.iter().map(|s| s.as_str()).collect();
+      let result = decmp_core::extract_by_paths(
+        ctx.archive.handler.as_ref(),
+        &ctx.archive.path,
+        &ctx.archive.entries,
+        &refs,
+        dest,
+        ctx.password.as_deref(),
+        ctx.encoding.as_deref(),
+      );
+      match result {
+        Ok(()) => {
+          ctx.status_msg = Some(format!("Extracted to {}", dest.display()));
+          ctx.mode = Mode::Browse;
+          ctx.pending_extract_entries = None;
+        }
+        Err(DecmpError::PasswordRequired) | Err(DecmpError::WrongPassword) => {
+          ctx.pending_action = Some(PendingAction::Extract);
+          ctx.mode = Mode::Password;
+        }
+        Err(e) => {
+          ctx.status_msg = Some(format!("Error: {e}"));
+          ctx.mode = Mode::Browse;
+          ctx.pending_extract_entries = None;
+        }
+      }
+      return;
+    }
+
     if !dest.exists()
       && let Err(e) = std::fs::create_dir_all(dest)
     {
@@ -446,23 +484,12 @@ impl App {
       return;
     }
 
-    let result = if let Some(ref entries) = ctx.pending_extract_entries {
-      let refs: Vec<&str> = entries.iter().map(|s| s.as_str()).collect();
-      ctx.archive.handler.extract_entries(
-        &ctx.archive.path,
-        &refs,
-        dest,
-        ctx.password.as_deref(),
-        ctx.encoding.as_deref(),
-      )
-    } else {
-      ctx.archive.handler.extract(
-        &ctx.archive.path,
-        dest,
-        ctx.password.as_deref(),
-        ctx.encoding.as_deref(),
-      )
-    };
+    let result = ctx.archive.handler.extract(
+      &ctx.archive.path,
+      dest,
+      ctx.password.as_deref(),
+      ctx.encoding.as_deref(),
+    );
 
     match result {
       Ok(()) => {

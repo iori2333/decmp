@@ -194,6 +194,85 @@ pub trait ArchiveHandler {
   }
 }
 
+pub fn extract_by_paths(
+  handler: &dyn ArchiveHandler,
+  archive_path: &Path,
+  entries: &[ArchiveEntry],
+  relative_paths: &[&str],
+  dest: &Path,
+  password: Option<&str>,
+  encoding: Option<&str>,
+) -> Result<()> {
+  if relative_paths.is_empty() {
+    return Ok(());
+  }
+
+  let mut extracted = false;
+
+  for path in relative_paths {
+    let path_norm = path.strip_suffix('/').unwrap_or(path);
+    let path_norm = path_norm.strip_prefix("./").unwrap_or(path_norm);
+    let path_prefix = format!("{path_norm}/");
+
+    let mut file_entries: Vec<&ArchiveEntry> = Vec::new();
+    let mut exact_file_match = false;
+
+    for entry in entries {
+      let name = entry.name.strip_prefix("./").unwrap_or(&entry.name);
+      let name_norm = name.trim_end_matches('/');
+
+      if name_norm == path_norm {
+        if !entry.is_dir {
+          file_entries.push(entry);
+          exact_file_match = true;
+        }
+      } else if !path_norm.is_empty() && name_norm.starts_with(&path_prefix) && !entry.is_dir {
+        file_entries.push(entry);
+      }
+    }
+
+    if file_entries.is_empty() {
+      continue;
+    }
+
+    if exact_file_match && file_entries.len() == 1 {
+      let entry = file_entries[0];
+      let bytes = handler.read_entry(archive_path, &entry.name, password, encoding, None)?;
+      if let Some(parent) = dest.parent()
+        && !parent.as_os_str().is_empty()
+      {
+        std::fs::create_dir_all(parent)?;
+      }
+      std::fs::write(dest, &bytes)?;
+      extracted = true;
+    } else {
+      let prefix = format!("{path_norm}/");
+      for entry in file_entries {
+        let entry_path = std::path::Path::new(entry.name.strip_prefix("./").unwrap_or(&entry.name));
+        let suffix = entry_path
+          .strip_prefix(&prefix)
+          .ok()
+          .or_else(|| entry_path.file_name().map(std::path::Path::new))
+          .unwrap_or(entry_path);
+        let out_path = dest.join(suffix);
+        if let Some(parent) = out_path.parent()
+          && !parent.as_os_str().is_empty()
+        {
+          std::fs::create_dir_all(parent)?;
+        }
+        let bytes = handler.read_entry(archive_path, &entry.name, password, encoding, None)?;
+        std::fs::write(&out_path, &bytes)?;
+      }
+      extracted = true;
+    }
+  }
+
+  if !extracted {
+    return Ok(());
+  }
+  Ok(())
+}
+
 pub fn get_handler(format: &Format) -> Box<dyn ArchiveHandler> {
   match format {
     Format::Zip => Box::new(zip::ZipHandler),

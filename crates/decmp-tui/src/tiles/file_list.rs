@@ -314,10 +314,10 @@ impl FileListTile {
         vec![]
       }
       KeyCode::Char('e') => {
-        let Some((name, is_dir)) = self.selected_info(ctx) else {
+        let Some((name, _is_dir)) = self.selected_info(ctx) else {
           return vec![];
         };
-        if &name == ".." || is_dir {
+        if &name == ".." {
           return vec![];
         }
         let full_name = self.build_full_path(&name);
