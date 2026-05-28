@@ -4,17 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
-thiserror = "2"
-walkdir = "2"
+anyhow = "1.0"
+thiserror = "2.0"
+walkdir = "2.5"
 encoding_rs = "0.8"
 chrono = "0.4"
 
 # Archive formats
-zip = { version = "8", features = ["aes-crypto", "bzip2", "zstd", "lzma", "xz", "deflate64", "ppmd"] }
+zip = { version = "8.6", features = ["aes-crypto", "bzip2", "zstd", "lzma", "xz", "deflate64", "ppmd"] }
 sevenz-rust = { version = "0.6", features = ["zstd", "bzip2", "aes256"] }
 tar = "0.4"
-flate2 = "1"
+flate2 = "1.1"
 zstd = "0.13"
 xz2 = "0.1"
 bzip2 = "0.4"
@@ -22,4 +22,4 @@ lzma-rs = { version = "0.3", features = ["stream"] }
 unrar = "0.5"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27"
