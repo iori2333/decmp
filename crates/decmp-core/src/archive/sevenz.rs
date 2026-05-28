@@ -71,7 +71,7 @@ impl ArchiveHandler for SevenZHandler {
             Ok(f) => f,
             Err(_) => return Ok(true),
           };
-          let _ = std::io::copy(reader, &mut file);
+          std::io::copy(reader, &mut file)?;
         }
         Ok(true)
       })
@@ -165,7 +165,7 @@ impl ArchiveHandler for SevenZHandler {
       .for_each_entries(|entry, reader| {
         if !wanted.contains(entry.name()) {
           // Drain non-matching files to advance the solid stream position
-          let _ = std::io::copy(reader, &mut std::io::sink());
+          std::io::copy(reader, &mut std::io::sink())?;
           return Ok(true);
         }
 
@@ -180,7 +180,7 @@ impl ArchiveHandler for SevenZHandler {
             Ok(f) => f,
             Err(_) => return Ok(true),
           };
-          let _ = std::io::copy(reader, &mut file);
+          std::io::copy(reader, &mut file)?;
         }
         Ok(true)
       })
@@ -210,15 +210,15 @@ impl ArchiveHandler for SevenZHandler {
           let mut buf = Vec::new();
           if let Some(limit) = max_bytes {
             let mut limited = reader.take(limit as u64);
-            let _ = std::io::copy(&mut limited, &mut buf);
+            std::io::copy(&mut limited, &mut buf)?;
           } else {
-            let _ = std::io::copy(reader, &mut buf);
+            std::io::copy(reader, &mut buf)?;
           }
           result = Some(buf);
           return Ok(false);
         }
         // Drain non-matching files to advance the solid stream position
-        let _ = std::io::copy(reader, &mut std::io::sink());
+        std::io::copy(reader, &mut std::io::sink())?;
         Ok(true)
       })
       .map_err(|e| DecmpError::InvalidArchive(format!("7z read error: {e}")))?;
