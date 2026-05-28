@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -17,12 +19,22 @@ impl TileId {
   pub const FOCUS_ORDER: &'static [TileId] =
     &[TileId::FileList, TileId::Properties, TileId::Preview];
 
-  pub fn next_focus(current: TileId) -> TileId {
-    let pos = Self::FOCUS_ORDER
+  pub fn next_focus(current: TileId, tiles: &HashMap<TileId, Box<dyn Tile>>) -> TileId {
+    let start = Self::FOCUS_ORDER
       .iter()
       .position(|id| *id == current)
       .unwrap_or(0);
-    Self::FOCUS_ORDER[(pos + 1) % Self::FOCUS_ORDER.len()]
+    for i in 1..=Self::FOCUS_ORDER.len() {
+      let candidate = Self::FOCUS_ORDER[(start + i) % Self::FOCUS_ORDER.len()];
+      if tiles
+        .get(&candidate)
+        .map(|t| t.focusable())
+        .unwrap_or(false)
+      {
+        return candidate;
+      }
+    }
+    current
   }
 }
 

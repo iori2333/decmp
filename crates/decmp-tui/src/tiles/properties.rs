@@ -177,7 +177,7 @@ impl Tile for PropertiesTile {
     } = action
     {
       self.scroll = 0;
-      if name == ".." || *is_dir {
+      if name.is_empty() || name == ".." || *is_dir {
         self.selected_entry = None;
       } else if !full_name.is_empty() {
         self.selected_entry = ctx

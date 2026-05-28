@@ -138,7 +138,7 @@ impl App {
         self.ctx.should_quit = true;
       }
       KeyCode::Tab => {
-        self.ctx.focus = TileId::next_focus(self.ctx.focus);
+        self.ctx.focus = TileId::next_focus(self.ctx.focus, &self.tiles);
       }
       KeyCode::Char('?') => {
         let action = Action::ShowPopup(PopupType::Help);

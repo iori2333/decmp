@@ -32,13 +32,17 @@ impl PreviewTile {
     }
   }
 
-  pub fn handle_selection_changed(
+  fn handle_selection_changed(
     &mut self,
     name: &str,
     is_dir: bool,
     full_name: &str,
     dir_entries: Option<&[String]>,
   ) {
+    if name.is_empty() {
+      self.content = SidePreview::default();
+      return;
+    }
     if name == ".." {
       self.content = SidePreview::default();
       return;
@@ -56,7 +60,7 @@ impl PreviewTile {
       .unwrap_or_else(|| SidePreview::empty_with_name(name));
   }
 
-  pub fn handle_preview_loaded(&mut self, full_name: String, preview: SidePreview) {
+  fn handle_preview_loaded(&mut self, full_name: String, preview: SidePreview) {
     self.cache.insert(full_name, preview.clone());
     self.content = preview;
     self.scroll = 0;
@@ -117,6 +121,10 @@ impl PreviewTile {
 impl Tile for PreviewTile {
   fn tile_id(&self) -> TileId {
     TileId::Preview
+  }
+
+  fn focusable(&self) -> bool {
+    self.content.is_dir || !self.content.lines.is_empty()
   }
 
   fn render(&mut self, area: Rect, frame: &mut Frame, ctx: &AppContext) {

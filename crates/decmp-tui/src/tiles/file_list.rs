@@ -34,14 +34,9 @@ impl FileListTile {
     }
   }
 
-  pub fn init_entries(&mut self, entries: &[ArchiveEntry]) {
+  pub fn init_entries(&mut self, _entries: &[ArchiveEntry]) {
     self.current_path.clear();
     self.list_state = ListState::default();
-    let tree = DirTree::from_entries(entries);
-    let sorted = tree.sorted_entries();
-    if !sorted.is_empty() {
-      self.list_state.select(Some(0));
-    }
   }
 
   fn current_tree<'a>(&self, ctx: &'a AppContext) -> &'a DirTree {
@@ -81,9 +76,18 @@ impl FileListTile {
     Some((name.clone(), is_dir))
   }
 
+  fn deselection_action() -> Vec<Action> {
+    vec![Action::SelectionChanged {
+      name: String::new(),
+      is_dir: false,
+      full_name: String::new(),
+      dir_entries: None,
+    }]
+  }
+
   fn selection_action(&self, ctx: &AppContext) -> Vec<Action> {
     let Some((name, is_dir)) = self.selected_info(ctx) else {
-      return vec![];
+      return Self::deselection_action();
     };
     let full_name = if name == ".." {
       String::new()
@@ -223,14 +227,9 @@ impl Tile for FileListTile {
     }
   }
 
-  fn reset_with_entries(&mut self, entries: &[ArchiveEntry]) {
+  fn reset_with_entries(&mut self, _entries: &[ArchiveEntry]) {
     self.current_path.clear();
     self.list_state = ListState::default();
-    let tree = DirTree::from_entries(entries);
-    let sorted = tree.sorted_entries();
-    if !sorted.is_empty() {
-      self.list_state.select(Some(0));
-    }
   }
 
   fn handle_action(&mut self, _action: &Action, _ctx: &AppContext) {}
@@ -240,6 +239,10 @@ impl FileListTile {
   fn handle_key(&mut self, key: &crossterm::event::KeyEvent, ctx: &AppContext) -> Vec<Action> {
     match key.code {
       KeyCode::Esc => {
+        if self.list_state.selected().is_some() {
+          self.list_state.select(None);
+          return Self::deselection_action();
+        }
         if self.current_path.is_empty() {
           vec![Action::Quit]
         } else {
@@ -262,6 +265,10 @@ impl FileListTile {
       }
       KeyCode::Enter => self.enter_selected(ctx),
       KeyCode::Backspace => {
+        if self.list_state.selected().is_some() {
+          self.list_state.select(None);
+          return Self::deselection_action();
+        }
         if self.current_path.is_empty() {
           vec![Action::Quit]
         } else {
@@ -301,8 +308,16 @@ impl FileListTile {
     if len == 0 {
       return vec![];
     }
-    let i = self.list_state.selected().unwrap_or(0);
-    let new = (i as isize + delta).clamp(0, len as isize - 1) as usize;
+    let new = match self.list_state.selected() {
+      Some(i) => (i as isize + delta).clamp(0, len as isize - 1) as usize,
+      None => {
+        if delta < 0 {
+          len - 1
+        } else {
+          0
+        }
+      }
+    };
     self.list_state.select(Some(new));
     self.selection_action(ctx)
   }
@@ -316,18 +331,18 @@ impl FileListTile {
         return self.go_up(ctx);
       } else {
         self.current_path.push(name.to_string());
-        self.list_state.select(Some(0));
-        return self.selection_action(ctx);
+        self.list_state.select(None);
+        return Self::deselection_action();
       }
     }
     let full_name = self.build_full_path(&name);
     vec![Action::RequestPreviewLoad { full_name }]
   }
 
-  fn go_up(&mut self, ctx: &AppContext) -> Vec<Action> {
+  fn go_up(&mut self, _ctx: &AppContext) -> Vec<Action> {
     if self.current_path.pop().is_some() {
-      self.list_state.select(Some(0));
-      self.selection_action(ctx)
+      self.list_state.select(None);
+      Self::deselection_action()
     } else {
       vec![]
     }
