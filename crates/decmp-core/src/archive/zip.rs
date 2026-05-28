@@ -154,7 +154,10 @@ impl ArchiveHandler for ZipHandler {
 
         for entry in WalkDir::new(src).min_depth(1) {
           let entry = entry?;
-          let rel_path = entry.path().strip_prefix(src).unwrap();
+          let rel_path = entry
+            .path()
+            .strip_prefix(src)
+            .map_err(|e| DecmpError::InvalidArchive(format!("path error: {e}")))?;
           let zip_path = Path::new(&base_name).join(rel_path);
 
           if entry.file_type().is_dir() {

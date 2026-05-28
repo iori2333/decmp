@@ -56,7 +56,7 @@ fn read_entry(&self, path, entry_name, password, encoding) -> Result<Vec<u8>>;
 fn create(&self, sources, dest, password, level) -> Result<()>;
 ```
 
-7 handlers: Zip, SevenZ, Tar (handles tar.gz/xz/zst/bz2/lzma), Gzip, Zstd, Xz, Bzip2.
+8 handlers: Zip, SevenZ, Rar, Tar (handles tar.gz/xz/zst/bz2/lzma), Gzip, Zstd, Xz, Bzip2.
 
 Single-file formats (Gzip/Zstd/Xz/Bzip2) only compress one file — directories need tar.* variants.
 
@@ -93,11 +93,25 @@ Mode enum: Browse/Password/ExtractDest/Properties/Help (no Preview mode — prev
 
 Format detection is purely filename-based (no magic bytes). `detect_format()` in `archive/mod.rs`.
 
+## Error handling (mandatory)
+
+**Production code** (everything except `#[cfg(test)]` and `tests/`) must follow these rules:
+
+- **No `.unwrap()`** — use `?` or `.map_err(|e| DecmpError::…)`.
+- **No `.expect()`** — same reasoning.
+- **No `let _ = expr` where `expr: Result`** — always handle or propagate errors. If a failure is truly acceptable, use `.ok()` and document why.
+- **`std::io::copy` returns must use `?`** — the closures in `sevenz.rs` return `Result<bool, sevenz_rust::Error>`, and `sevenz_rust::Error: From<std::io::Error>`, so `?` works directly.
+- **`std::fs::create_dir_all` returns must use `?`** — same as above.
+- **`File::create` failures must propagate** — don't silently skip files with `Err(_) => return Ok(true)`.
+- **`strip_prefix` on paths must not unwrap** — use `map_err(|e| DecmpError::InvalidArchive(format!("path error: {e}")))?`.
+
+Guideline: when adding a new archive handler, grep the new code for `unwrap`, `expect`, and `let _ =`. Any hit outside `#[cfg(test)]` is a bug.
+
 ## Common gotchas
 
 - `cargo run` in workspace root needs `--bin decmp` or `--bin decmp-tui` — there are two binaries.
 - ZIP encryption: `entry.by_index_decrypt(i, pw.as_bytes())` but `options.with_aes_encryption(AesMode::Aes256, pw)` takes `&str`, not `&[u8]`. Inconsistent API across the zip crate.
-- The `sevenz-rust` `FileTime(u64)` field `0` is **private** — no public way to extract raw timestamp.
+- The `sevenz-rust` `FileTime(u64)` field `0` is **private** — use `entry.has_last_modified_date` + `entry.last_modified_date` (the public field/method) to access timestamps.
 - TUI password input has no horizontal scroll — just `"*"` repeated, truncated with `<` prefix if overlong.
 - TUI preview for files is lazy: Enter loads it, clicking selects but doesn't load until Enter is pressed. Directory contents show automatically in the right panel.
 - Rust edition 2024 changes pattern binding: `let Some((name, _)) = expr` may give `&str` instead of `String` in some contexts. Use `&name == ".."` or store the value explicitly.

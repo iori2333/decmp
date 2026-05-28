@@ -62,15 +62,12 @@ impl ArchiveHandler for SevenZHandler {
         let out_path = dest.join(entry.name());
 
         if entry.is_directory() {
-          let _ = std::fs::create_dir_all(&out_path);
+          std::fs::create_dir_all(&out_path)?;
         } else {
           if let Some(parent) = out_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent)?;
           }
-          let mut file = match File::create(&out_path) {
-            Ok(f) => f,
-            Err(_) => return Ok(true),
-          };
+          let mut file = File::create(&out_path)?;
           std::io::copy(reader, &mut file)?;
         }
         Ok(true)
@@ -112,7 +109,10 @@ impl ArchiveHandler for SevenZHandler {
 
         for entry in WalkDir::new(src).min_depth(1) {
           let entry = entry?;
-          let rel_path = entry.path().strip_prefix(src).unwrap();
+          let rel_path = entry
+            .path()
+            .strip_prefix(src)
+            .map_err(|e| DecmpError::InvalidArchive(format!("path error: {e}")))?;
           let entry_name = Path::new(&base_name)
             .join(rel_path)
             .to_string_lossy()
@@ -171,15 +171,12 @@ impl ArchiveHandler for SevenZHandler {
 
         let out_path = dest.join(entry.name());
         if entry.is_directory() {
-          let _ = std::fs::create_dir_all(&out_path);
+          std::fs::create_dir_all(&out_path)?;
         } else {
           if let Some(parent) = out_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            std::fs::create_dir_all(parent)?;
           }
-          let mut file = match File::create(&out_path) {
-            Ok(f) => f,
-            Err(_) => return Ok(true),
-          };
+          let mut file = File::create(&out_path)?;
           std::io::copy(reader, &mut file)?;
         }
         Ok(true)
