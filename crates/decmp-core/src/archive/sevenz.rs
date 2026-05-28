@@ -164,6 +164,8 @@ impl ArchiveHandler for SevenZHandler {
     reader
       .for_each_entries(|entry, reader| {
         if !wanted.contains(entry.name()) {
+          // Drain non-matching files to advance the solid stream position
+          let _ = std::io::copy(reader, &mut std::io::sink());
           return Ok(true);
         }
 
@@ -215,6 +217,8 @@ impl ArchiveHandler for SevenZHandler {
           result = Some(buf);
           return Ok(false);
         }
+        // Drain non-matching files to advance the solid stream position
+        let _ = std::io::copy(reader, &mut std::io::sink());
         Ok(true)
       })
       .map_err(|e| DecmpError::InvalidArchive(format!("7z read error: {e}")))?;
@@ -235,8 +239,7 @@ fn format_7z_time(entry: &SevenZArchiveEntry) -> Option<String> {
   let unix_nanos = (raw - NT_EPOCH_OFFSET) * 100;
   let secs = (unix_nanos / 1_000_000_000) as i64;
   let nanos = (unix_nanos % 1_000_000_000) as u32;
-  chrono::DateTime::from_timestamp(secs, nanos)
-    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+  chrono::DateTime::from_timestamp(secs, nanos).map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
 }
 
 #[cfg(test)]
@@ -320,6 +323,163 @@ mod tests {
     let out_dir = tmp.path().join("out");
     handler.extract(&archive, &out_dir, None, None).unwrap();
     assert_eq!(std::fs::read(out_dir.join("hello.txt")).unwrap(), b"Hello!");
+
+    // read_entry must return file content
+    let data = handler
+      .read_entry(&archive, "hello.txt", None, None, None)
+      .unwrap();
+    assert_eq!(data, b"Hello!");
+  }
+
+  #[test]
+  fn test_7z_read_entry_multiple() {
+    let tmp = tempfile::tempdir().unwrap();
+    let f1 = write_temp_file(tmp.path(), "a.txt", b"AAA");
+    let f2 = write_temp_file(tmp.path(), "b.txt", b"BBBBBB");
+    let f3 = write_temp_file(tmp.path(), "c.txt", b"CCCCCCCCC");
+    let archive = tmp.path().join("multi.7z");
+
+    let handler = SevenZHandler;
+    handler.create(&[f1, f2, f3], &archive, None, None).unwrap();
+
+    // Test WITH max_bytes (as the TUI always calls it)
+    assert_eq!(
+      handler
+        .read_entry(&archive, "c.txt", None, None, Some(64 * 1024))
+        .unwrap(),
+      b"CCCCCCCCC"
+    );
+    assert_eq!(
+      handler
+        .read_entry(&archive, "a.txt", None, None, Some(64 * 1024))
+        .unwrap(),
+      b"AAA"
+    );
+    assert_eq!(
+      handler
+        .read_entry(&archive, "b.txt", None, None, Some(64 * 1024))
+        .unwrap(),
+      b"BBBBBB"
+    );
+  }
+
+  #[test]
+  fn test_7z_read_entry_via_listed_names() {
+    // Simulate the exact TUI flow: list, then read_entry with listed names
+    let tmp = tempfile::tempdir().unwrap();
+    let f1 = write_temp_file(tmp.path(), "first.rs", b"// first file");
+    let f2 = write_temp_file(tmp.path(), "second.py", b"# second file");
+    let archive = tmp.path().join("test.7z");
+
+    let handler = SevenZHandler;
+    handler.create(&[f1, f2], &archive, None, None).unwrap();
+
+    let entries = handler.list(&archive, None, None).unwrap();
+    for e in &entries {
+      if e.is_dir {
+        continue;
+      }
+      let data = handler
+        .read_entry(&archive, &e.name, None, None, Some(64 * 1024))
+        .unwrap();
+      assert!(!data.is_empty(), "empty data for {}", e.name);
+    }
+  }
+
+  #[test]
+  fn test_7z_read_fixture() {
+    use std::path::PathBuf;
+    let path = PathBuf::from("tests/fixtures/codes.7z");
+    if !path.exists() {
+      return;
+    }
+    let handler = SevenZHandler;
+    let entries = handler.list(&path, None, None).unwrap();
+    assert!(entries.len() >= 2, "need at least 2 files");
+
+    let name_a = &entries[0].name;
+    let name_b = &entries[1].name;
+
+    let data_a = handler
+      .read_entry(&path, name_a, None, None, Some(64 * 1024))
+      .unwrap();
+    let data_b = handler
+      .read_entry(&path, name_b, None, None, Some(64 * 1024))
+      .unwrap();
+
+    assert!(
+      data_a != data_b,
+      "read_entry returned same content for {name_a} and {name_b}"
+    );
+  }
+
+  #[test]
+  fn test_7z_read_cli_archive() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("input");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), b"AAA").unwrap();
+    std::fs::write(dir.join("b.txt"), b"BBB").unwrap();
+
+    let archive = tmp.path().join("cli.7z");
+    let status = std::process::Command::new("7z")
+      .args([
+        "a",
+        "-t7z",
+        &archive.to_string_lossy().to_string(),
+        "a.txt",
+        "b.txt",
+      ])
+      .current_dir(&dir)
+      .status()
+      .unwrap();
+    assert!(status.success(), "7z CLI failed");
+
+    let handler = SevenZHandler;
+    let entries = handler.list(&archive, None, None).unwrap();
+
+    // Entry names from CLI-created 7z are just the filenames (no dir prefix)
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    eprintln!("entries: {names:?}");
+
+    // Read second file first, then first
+    let data_b = handler
+      .read_entry(&archive, "b.txt", None, None, Some(64 * 1024))
+      .unwrap();
+    let data_a = handler
+      .read_entry(&archive, "a.txt", None, None, Some(64 * 1024))
+      .unwrap();
+
+    assert_eq!(data_a, b"AAA", "a.txt mismatch");
+    assert_eq!(data_b, b"BBB", "b.txt mismatch");
+  }
+
+  #[test]
+  fn test_7z_read_entry_rapid_switching() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut sources = Vec::new();
+    let mut expected: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+    for i in 0..10 {
+      let name = format!("file_{i:02}.txt");
+      let content = format!("content_of_file_{i:02}\n");
+      expected.insert(name.clone(), content.as_bytes().to_vec());
+      sources.push(write_temp_file(tmp.path(), &name, content.as_bytes()));
+    }
+    let archive = tmp.path().join("many.7z");
+
+    let handler = SevenZHandler;
+    handler.create(&sources, &archive, None, None).unwrap();
+
+    let entries = handler.list(&archive, None, None).unwrap();
+    let file_entries: Vec<_> = entries.iter().filter(|e| !e.is_dir).collect();
+    assert_eq!(file_entries.len(), 10);
+
+    for e in &file_entries {
+      let data = handler
+        .read_entry(&archive, &e.name, None, None, Some(64 * 1024))
+        .unwrap();
+      assert_eq!(data, expected[&e.name], "content mismatch for {}", e.name);
+    }
   }
 
   #[test]
