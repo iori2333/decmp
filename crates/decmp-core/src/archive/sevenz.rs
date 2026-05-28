@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use sevenz_rust::{Password, SevenZArchiveEntry, SevenZWriter};
@@ -36,7 +37,7 @@ impl ArchiveHandler for SevenZHandler {
         compressed_size: 0,
         is_dir: entry.is_directory(),
         method: "7z".to_string(),
-        modified: None,
+        modified: format_7z_time(entry),
       });
     }
 
@@ -192,6 +193,7 @@ impl ArchiveHandler for SevenZHandler {
     entry_name: &str,
     password: Option<&str>,
     _encoding: Option<&str>,
+    max_bytes: Option<usize>,
   ) -> Result<Vec<u8>> {
     let pw = make_password(password);
     let mut reader = sevenz_rust::SevenZReader::open(archive_path, pw)
@@ -204,7 +206,12 @@ impl ArchiveHandler for SevenZHandler {
       .for_each_entries(|entry, reader| {
         if entry.name() == target {
           let mut buf = Vec::new();
-          let _ = std::io::copy(reader, &mut buf);
+          if let Some(limit) = max_bytes {
+            let mut limited = reader.take(limit as u64);
+            let _ = std::io::copy(&mut limited, &mut buf);
+          } else {
+            let _ = std::io::copy(reader, &mut buf);
+          }
           result = Some(buf);
           return Ok(false);
         }
@@ -214,6 +221,22 @@ impl ArchiveHandler for SevenZHandler {
 
     result.ok_or_else(|| DecmpError::InvalidArchive(format!("entry not found: {entry_name}")))
   }
+}
+
+fn format_7z_time(entry: &SevenZArchiveEntry) -> Option<String> {
+  if !entry.has_last_modified_date {
+    return None;
+  }
+  let raw = entry.last_modified_date.to_raw();
+  const NT_EPOCH_OFFSET: u64 = 116_444_736_000_000_000;
+  if raw <= NT_EPOCH_OFFSET {
+    return None;
+  }
+  let unix_nanos = (raw - NT_EPOCH_OFFSET) * 100;
+  let secs = (unix_nanos / 1_000_000_000) as i64;
+  let nanos = (unix_nanos % 1_000_000_000) as u32;
+  chrono::DateTime::from_timestamp(secs, nanos)
+    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
 }
 
 #[cfg(test)]

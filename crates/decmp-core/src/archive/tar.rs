@@ -278,6 +278,7 @@ impl ArchiveHandler for TarHandler {
     entry_name: &str,
     _password: Option<&str>,
     encoding: Option<&str>,
+    max_bytes: Option<usize>,
   ) -> Result<Vec<u8>> {
     let reader = open_tar_reader(archive_path, &self.format)?;
     let mut archive = Archive::new(reader);
@@ -296,7 +297,12 @@ impl ArchiveHandler for TarHandler {
 
       if name == entry_name {
         let mut buf = Vec::new();
-        std::io::copy(&mut entry, &mut buf)?;
+        if let Some(limit) = max_bytes {
+          let mut limited = (&mut entry).take(limit as u64);
+          std::io::copy(&mut limited, &mut buf)?;
+        } else {
+          std::io::copy(&mut entry, &mut buf)?;
+        }
         return Ok(buf);
       }
     }

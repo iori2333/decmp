@@ -19,6 +19,7 @@ zstd = "0.13"
 xz2 = "0.1"
 bzip2 = "0.4"
 lzma-rs = { version = "0.3", features = ["stream"] }
+unrar = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

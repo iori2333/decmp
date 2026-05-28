@@ -1,5 +1,6 @@
 pub mod bzip2;
 pub mod gzip;
+pub mod rar;
 pub mod sevenz;
 pub mod tar;
 pub mod xz;
@@ -14,6 +15,7 @@ use crate::error::{DecmpError, Result};
 pub enum Format {
   Zip,
   SevenZ,
+  Rar,
   Tar,
   TarGz,
   TarXz,
@@ -32,6 +34,7 @@ impl Format {
     match self {
       Self::Zip => "zip",
       Self::SevenZ => "7z",
+      Self::Rar => "rar",
       Self::Tar => "tar",
       Self::TarGz => "tar.gz",
       Self::TarXz => "tar.xz",
@@ -60,6 +63,7 @@ impl std::str::FromStr for Format {
     match s.to_lowercase().as_str() {
       "zip" => Ok(Self::Zip),
       "7z" => Ok(Self::SevenZ),
+      "rar" => Ok(Self::Rar),
       "tar" => Ok(Self::Tar),
       "tar.gz" | "tgz" => Ok(Self::TarGz),
       "tar.xz" | "txz" => Ok(Self::TarXz),
@@ -104,6 +108,7 @@ pub fn detect_format(path: &Path) -> Result<Format> {
   match ext.as_deref() {
     Some("zip") => Ok(Format::Zip),
     Some("7z") => Ok(Format::SevenZ),
+    Some("rar") => Ok(Format::Rar),
     Some("tar") => Ok(Format::Tar),
     Some("gz") | Some("gzip") => Ok(Format::Gz),
     Some("zst") | Some("zstd") => Ok(Format::Zst),
@@ -180,8 +185,9 @@ pub trait ArchiveHandler {
     entry_name: &str,
     password: Option<&str>,
     encoding: Option<&str>,
+    max_bytes: Option<usize>,
   ) -> Result<Vec<u8>> {
-    let _ = (archive_path, entry_name, password, encoding);
+    let _ = (archive_path, entry_name, password, encoding, max_bytes);
     Err(DecmpError::InvalidArchive(
       "read_entry not supported for this format".to_string(),
     ))
@@ -192,6 +198,7 @@ pub fn get_handler(format: &Format) -> Box<dyn ArchiveHandler> {
   match format {
     Format::Zip => Box::new(zip::ZipHandler),
     Format::SevenZ => Box::new(sevenz::SevenZHandler),
+    Format::Rar => Box::new(rar::RarHandler),
     Format::Tar
     | Format::TarGz
     | Format::TarXz
@@ -293,7 +300,8 @@ mod tests {
     assert_eq!("tgz".parse::<Format>().unwrap(), Format::TarGz);
     assert_eq!("tar.gz".parse::<Format>().unwrap(), Format::TarGz);
     assert_eq!("7z".parse::<Format>().unwrap(), Format::SevenZ);
-    assert!("rar".parse::<Format>().is_err());
+    assert_eq!("rar".parse::<Format>().unwrap(), Format::Rar);
+    assert!("xyz".parse::<Format>().is_err());
   }
 
   #[test]

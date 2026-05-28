@@ -16,11 +16,13 @@ impl SidePreview {
     name: &str,
     lines: Vec<String>,
     highlighted: Vec<Vec<ratatui::text::Span<'static>>>,
+    is_truncated: bool,
   ) -> Self {
     Self {
       name: name.to_string(),
       lines,
       highlighted,
+      is_truncated,
       ..Default::default()
     }
   }
@@ -56,29 +58,26 @@ impl App {
       return;
     }
 
-    if !crate::tree::is_text_file(&name) {
-      self.cache_and_show_preview(full_name, SidePreview::binary(&name));
-      return;
-    }
-
     match self.archive.handler.read_entry(
       &self.archive.path,
       &full_name,
       self.password.as_deref(),
       None,
+      Some(MAX_PREVIEW_BYTES),
     ) {
       Ok(bytes) => {
-        let truncated = bytes.len() > MAX_PREVIEW_BYTES;
-        let content = if truncated {
-          &bytes[..MAX_PREVIEW_BYTES]
-        } else {
-          &bytes
-        };
-        let preview = match std::str::from_utf8(content) {
+        let is_truncated = bytes.len() >= MAX_PREVIEW_BYTES;
+
+        if crate::tree::is_binary_content(&bytes) {
+          self.cache_and_show_preview(full_name, SidePreview::binary(&name));
+          return;
+        }
+
+        let preview = match std::str::from_utf8(&bytes) {
           Ok(text) => {
             let lines: Vec<String> = text.lines().map(String::from).collect();
             let highlighted = crate::highlight::highlight_text(text, &name);
-            SidePreview::file(&name, lines, highlighted)
+            SidePreview::file(&name, lines, highlighted, is_truncated)
           }
           Err(_) => SidePreview::binary(&name),
         };

@@ -258,6 +258,7 @@ impl ArchiveHandler for ZipHandler {
     entry_name: &str,
     password: Option<&str>,
     enc: Option<&str>,
+    max_bytes: Option<usize>,
   ) -> Result<Vec<u8>> {
     let file = File::open(archive_path)?;
     let mut archive = ZipArchive::new(file).map_err(convert_zip_error)?;
@@ -280,7 +281,12 @@ impl ArchiveHandler for ZipHandler {
 
       if name == entry_name {
         let mut buf = Vec::new();
-        std::io::copy(&mut entry, &mut buf)?;
+        if let Some(limit) = max_bytes {
+          let mut limited = (&mut entry).take(limit as u64);
+          std::io::copy(&mut limited, &mut buf)?;
+        } else {
+          std::io::copy(&mut entry, &mut buf)?;
+        }
         return Ok(buf);
       }
     }

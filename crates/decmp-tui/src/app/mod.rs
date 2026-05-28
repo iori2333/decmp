@@ -45,6 +45,7 @@ pub struct SidePreview {
   pub name: String,
   pub is_binary: bool,
   pub is_dir: bool,
+  pub is_truncated: bool,
   pub dir_entries: Vec<String>,
 }
 

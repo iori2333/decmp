@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use bzip2::Compression;
@@ -121,6 +122,7 @@ impl ArchiveHandler for Bzip2Handler {
     entry_name: &str,
     _password: Option<&str>,
     _encoding: Option<&str>,
+    max_bytes: Option<usize>,
   ) -> Result<Vec<u8>> {
     let out_name = output_name(archive_path);
     if entry_name != out_name {
@@ -131,7 +133,12 @@ impl ArchiveHandler for Bzip2Handler {
     let file = File::open(archive_path)?;
     let mut decoder = BzDecoder::new(file);
     let mut buf = Vec::new();
-    std::io::copy(&mut decoder, &mut buf)?;
+    if let Some(limit) = max_bytes {
+      let mut limited = (&mut decoder).take(limit as u64);
+      std::io::copy(&mut limited, &mut buf)?;
+    } else {
+      std::io::copy(&mut decoder, &mut buf)?;
+    }
     Ok(buf)
   }
 }

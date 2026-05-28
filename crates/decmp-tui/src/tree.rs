@@ -72,96 +72,20 @@ impl DirTree {
   }
 }
 
-pub fn is_text_file(name: &str) -> bool {
-  const TEXT_EXTENSIONS: &[&str] = &[
-    "txt",
-    "md",
-    "rs",
-    "toml",
-    "json",
-    "xml",
-    "html",
-    "htm",
-    "css",
-    "js",
-    "ts",
-    "py",
-    "c",
-    "h",
-    "cpp",
-    "hpp",
-    "go",
-    "java",
-    "kt",
-    "rb",
-    "pl",
-    "sh",
-    "bash",
-    "zsh",
-    "fish",
-    "bat",
-    "cmd",
-    "ps1",
-    "yml",
-    "yaml",
-    "ini",
-    "cfg",
-    "conf",
-    "log",
-    "csv",
-    "tsv",
-    "sql",
-    "r",
-    "lua",
-    "vim",
-    "el",
-    "lisp",
-    "clj",
-    "ex",
-    "exs",
-    "erl",
-    "hs",
-    "ml",
-    "mli",
-    "scala",
-    "groovy",
-    "gradle",
-    "makefile",
-    "mk",
-    "cmake",
-    "dockerfile",
-    "gitignore",
-    "env",
-    "lock",
-    "diff",
-    "patch",
-    "rst",
-    "tex",
-    "latex",
-    "bib",
-    "org",
-    "asciidoc",
-    "adoc",
-    "svg",
-    "properties",
-    "toml",
-    "json5",
-    "jsonc",
-  ];
+pub fn is_binary_content(data: &[u8]) -> bool {
+  let check_len = data.len().min(8000);
+  let sample = &data[..check_len];
 
-  let lower = name.to_lowercase();
-
-  if let Some(pos) = lower.rfind('.') {
-    let ext = &lower[pos + 1..];
-    return TEXT_EXTENSIONS.contains(&ext);
-  }
-
-  // Files without extension might be text (Makefile, Dockerfile, LICENSE, etc.)
-  if !lower.contains('.') {
+  if sample.contains(&0) {
     return true;
   }
 
-  false
+  let non_printable = sample
+    .iter()
+    .filter(|&&b| b != b'\n' && b != b'\r' && b != b'\t' && b < 0x20)
+    .count();
+
+  non_printable > check_len / 10
 }
 
 #[cfg(test)]
@@ -222,17 +146,6 @@ mod tests {
   }
 
   #[test]
-  fn test_is_text_file() {
-    assert!(is_text_file("readme.md"));
-    assert!(is_text_file("main.rs"));
-    assert!(is_text_file("Makefile"));
-    assert!(is_text_file("Dockerfile"));
-    assert!(!is_text_file("image.png"));
-    assert!(!is_text_file("archive.zip"));
-    assert!(!is_text_file("binary.bin"));
-  }
-
-  #[test]
   fn test_empty_tree() {
     let tree = DirTree::from_entries(&[]);
     assert!(tree.children.is_empty());
@@ -268,5 +181,25 @@ mod tests {
     assert_eq!(sorted[0].0, "src");
     assert_eq!(sorted[1].0, "health.c");
     assert_eq!(sorted[2].0, "server.go");
+  }
+
+  #[test]
+  fn test_is_binary_content() {
+    assert!(!is_binary_content(b""));
+    assert!(!is_binary_content(b"Hello, world!\nThis is text."));
+    assert!(!is_binary_content(
+      "fn main() {\n  println!(\"你好\");\n}\n".as_bytes()
+    ));
+
+    assert!(is_binary_content(b"text\0with\0nulls"));
+
+    let binary = [0u8; 1024];
+    assert!(is_binary_content(&binary));
+
+    let mut jpeg_like = Vec::with_capacity(512);
+    for i in 0..512 {
+      jpeg_like.push((i * 73 + 17) as u8);
+    }
+    assert!(is_binary_content(&jpeg_like));
   }
 }

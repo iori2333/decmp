@@ -149,7 +149,7 @@ fn draw_side_preview(f: &mut Frame, app: &mut App, area: Rect) {
   let visible = inner.height as usize;
   let start = app.preview.scroll;
   let end = (start + visible).min(preview.lines.len());
-  let lines: Vec<Line> = if !preview.highlighted.is_empty() {
+  let mut lines: Vec<Line> = if !preview.highlighted.is_empty() {
     preview.highlighted[start..end]
       .iter()
       .map(|spans| Line::from(spans.clone()))
@@ -160,6 +160,13 @@ fn draw_side_preview(f: &mut Frame, app: &mut App, area: Rect) {
       .map(|l| Line::from(l.as_str()))
       .collect()
   };
+
+  if preview.is_truncated {
+    lines.push(Line::from(Span::styled(
+      "\n--- Preview truncated (file exceeds 64KB) ---",
+      dim(),
+    )));
+  }
 
   f.render_widget(Paragraph::new(lines).block(block.clone()), area);
 
