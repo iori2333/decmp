@@ -5,19 +5,17 @@ use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-  Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::action::Action;
 use crate::context::{AppContext, SidePreview};
+use crate::scroll::{ScrollState, Scrollable};
 use crate::tile::{InputEvent, Tile, TileId};
 
 pub struct PreviewTile {
   content: SidePreview,
-  scroll: usize,
   cache: HashMap<String, SidePreview>,
-  scrollbar_state: ScrollbarState,
+  scroll: ScrollState,
   area: Rect,
 }
 
@@ -25,9 +23,8 @@ impl PreviewTile {
   pub fn new() -> Self {
     Self {
       content: SidePreview::default(),
-      scroll: 0,
       cache: HashMap::new(),
-      scrollbar_state: ScrollbarState::default(),
+      scroll: ScrollState::new(),
       area: Rect::default(),
     }
   }
@@ -39,11 +36,7 @@ impl PreviewTile {
     full_name: &str,
     dir_entries: Option<&[String]>,
   ) {
-    if name.is_empty() {
-      self.content = SidePreview::default();
-      return;
-    }
-    if name == ".." {
+    if name.is_empty() || name == ".." {
       self.content = SidePreview::default();
       return;
     }
@@ -63,42 +56,7 @@ impl PreviewTile {
   fn handle_preview_loaded(&mut self, full_name: String, preview: SidePreview) {
     self.cache.insert(full_name, preview.clone());
     self.content = preview;
-    self.scroll = 0;
-  }
-
-  fn update_scrollbar(&mut self, visible_height: usize) {
-    let total = self.content.lines.len();
-    if total == 0 {
-      self.scrollbar_state = ScrollbarState::default();
-      return;
-    }
-    self.scrollbar_state = self
-      .scrollbar_state
-      .content_length(total)
-      .position(self.scroll)
-      .viewport_content_length(visible_height);
-  }
-
-  fn scroll_up(&mut self) {
-    self.scroll = self.scroll.saturating_sub(1);
-  }
-
-  fn scroll_down(&mut self) {
-    if !self.content.lines.is_empty() && self.scroll < self.content.lines.len().saturating_sub(1) {
-      self.scroll += 1;
-    }
-  }
-
-  fn scroll_page_up(&mut self) {
-    for _ in 0..20 {
-      self.scroll_up();
-    }
-  }
-
-  fn scroll_page_down(&mut self) {
-    for _ in 0..20 {
-      self.scroll_down();
-    }
+    self.scroll.reset();
   }
 
   fn render_dir_preview(&self, area: Rect, frame: &mut Frame, block: Block<'_>) {
@@ -188,7 +146,9 @@ impl Tile for PreviewTile {
 
     let inner = block.inner(area);
     let visible = inner.height as usize;
-    let start = self.scroll;
+    let max_scroll = self.content.lines.len().saturating_sub(visible);
+    self.scroll.v_scroll = self.scroll.v_scroll.min(max_scroll);
+    let start = self.scroll.v_scroll;
     let end = (start + visible).min(self.content.lines.len());
     let mut lines: Vec<Line> = if !self.content.highlighted.is_empty() {
       self.content.highlighted[start..end]
@@ -208,30 +168,26 @@ impl Tile for PreviewTile {
 
     frame.render_widget(Paragraph::new(lines).block(block.clone()), area);
 
-    self.update_scrollbar(visible);
-    let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-      .begin_symbol(None)
-      .end_symbol(None);
-    frame.render_stateful_widget(sb, area, &mut self.scrollbar_state);
+    self.render_scrollbar(area, visible, frame, ctx);
   }
 
-  fn handle_input(&mut self, event: &InputEvent, _ctx: &AppContext) -> Vec<Action> {
+  fn handle_input(&mut self, event: &InputEvent, ctx: &AppContext) -> Vec<Action> {
     match event {
       InputEvent::Key(key) => match key.code {
         KeyCode::Up | KeyCode::Char('k') => {
-          self.scroll_up();
+          self.scroll_up(ctx);
           vec![]
         }
         KeyCode::Down | KeyCode::Char('j') => {
-          self.scroll_down();
+          self.scroll_down(ctx);
           vec![]
         }
         KeyCode::PageUp => {
-          self.scroll_page_up();
+          self.scroll_page_up(ctx);
           vec![]
         }
         KeyCode::PageDown => {
-          self.scroll_page_down();
+          self.scroll_page_down(ctx);
           vec![]
         }
         _ => vec![],
@@ -241,13 +197,13 @@ impl Tile for PreviewTile {
         match mouse.kind {
           MouseEventKind::ScrollUp => {
             if in_area(pos, self.area) {
-              self.scroll_up();
+              self.scroll_up(ctx);
             }
             vec![]
           }
           MouseEventKind::ScrollDown => {
             if in_area(pos, self.area) {
-              self.scroll_down();
+              self.scroll_down(ctx);
             }
             vec![]
           }
@@ -277,6 +233,24 @@ impl Tile for PreviewTile {
   fn clear_cache(&mut self) {
     self.cache.clear();
     self.content = SidePreview::default();
+  }
+}
+
+impl Scrollable for PreviewTile {
+  fn supports_vertical_scroll(&self) -> bool {
+    true
+  }
+
+  fn scroll_state(&self) -> &ScrollState {
+    &self.scroll
+  }
+
+  fn scroll_state_mut(&mut self) -> &mut ScrollState {
+    &mut self.scroll
+  }
+
+  fn content_line_count(&self, _ctx: &AppContext) -> usize {
+    self.content.lines.len()
   }
 }
 

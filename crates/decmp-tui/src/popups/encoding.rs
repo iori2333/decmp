@@ -8,17 +8,30 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use crate::action::{Action, PopupType};
 use crate::context::AppContext;
 use crate::popup::Popup;
+use crate::scroll::{ScrollState, Scrollable};
 use crate::tile::InputEvent;
 
 pub struct EncodingPopup {
   input: String,
+  scroll: ScrollState,
 }
 
 impl EncodingPopup {
   pub fn new(current: Option<&str>) -> Self {
     Self {
       input: current.unwrap_or_default().to_string(),
+      scroll: ScrollState::new(),
     }
+  }
+}
+
+impl Scrollable for EncodingPopup {
+  fn scroll_state(&self) -> &ScrollState {
+    &self.scroll
+  }
+
+  fn scroll_state_mut(&mut self) -> &mut ScrollState {
+    &mut self.scroll
   }
 }
 

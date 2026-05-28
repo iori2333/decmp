@@ -6,6 +6,7 @@ mod highlight;
 mod layout;
 mod popup;
 mod popups;
+mod scroll;
 mod tile;
 mod tiles;
 mod tree;

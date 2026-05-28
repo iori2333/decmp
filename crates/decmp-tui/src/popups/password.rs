@@ -8,17 +8,30 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use crate::action::{Action, PopupType};
 use crate::context::AppContext;
 use crate::popup::Popup;
+use crate::scroll::{ScrollState, Scrollable};
 use crate::tile::InputEvent;
 
 pub struct PasswordPopup {
   input: String,
+  scroll: ScrollState,
 }
 
 impl PasswordPopup {
   pub fn new() -> Self {
     Self {
       input: String::new(),
+      scroll: ScrollState::new(),
     }
+  }
+}
+
+impl Scrollable for PasswordPopup {
+  fn scroll_state(&self) -> &ScrollState {
+    &self.scroll
+  }
+
+  fn scroll_state_mut(&mut self) -> &mut ScrollState {
+    &mut self.scroll
   }
 }
 

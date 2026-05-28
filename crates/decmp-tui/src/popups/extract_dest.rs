@@ -10,17 +10,30 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use crate::action::{Action, PopupType};
 use crate::context::AppContext;
 use crate::popup::Popup;
+use crate::scroll::{ScrollState, Scrollable};
 use crate::tile::InputEvent;
 
 pub struct ExtractDestPopup {
   input: String,
+  scroll: ScrollState,
 }
 
 impl ExtractDestPopup {
   pub fn new(default_dest: PathBuf) -> Self {
     Self {
       input: default_dest.display().to_string(),
+      scroll: ScrollState::new(),
     }
+  }
+}
+
+impl Scrollable for ExtractDestPopup {
+  fn scroll_state(&self) -> &ScrollState {
+    &self.scroll
+  }
+
+  fn scroll_state_mut(&mut self) -> &mut ScrollState {
+    &mut self.scroll
   }
 }
 

@@ -3,24 +3,21 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{
-  Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
-  ScrollbarState,
-};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 use decmp_core::ArchiveEntry;
 
 use crate::action::Action;
 use crate::context::AppContext;
+use crate::scroll::{ScrollState, Scrollable};
 use crate::tile::{InputEvent, Tile, TileId};
 use crate::tree::{DirNode, DirTree};
 
 pub struct FileListTile {
   current_path: Vec<String>,
   list_state: ListState,
-  scrollbar_state: ScrollbarState,
+  scroll: ScrollState,
   area: Rect,
-  horizontal_scroll: usize,
 }
 
 impl FileListTile {
@@ -28,15 +25,15 @@ impl FileListTile {
     Self {
       current_path: Vec::new(),
       list_state: ListState::default(),
-      scrollbar_state: ScrollbarState::default(),
+      scroll: ScrollState::new(),
       area: Rect::default(),
-      horizontal_scroll: 0,
     }
   }
 
   pub fn init_entries(&mut self, _entries: &[ArchiveEntry]) {
     self.current_path.clear();
     self.list_state = ListState::default();
+    self.scroll.reset();
   }
 
   fn current_tree<'a>(&self, ctx: &'a AppContext) -> &'a DirTree {
@@ -128,15 +125,6 @@ impl FileListTile {
       format!("{}/{name}", self.current_path.join("/"))
     }
   }
-
-  fn update_scrollbar(&mut self, total: usize) {
-    let pos = self.list_state.selected().unwrap_or(0);
-    self.scrollbar_state = self
-      .scrollbar_state
-      .content_length(total)
-      .position(pos)
-      .viewport_content_length(1);
-  }
 }
 
 impl Tile for FileListTile {
@@ -175,25 +163,21 @@ impl Tile for FileListTile {
       return;
     }
 
-    let scroll = self.horizontal_scroll;
+    let h = self.scroll.h_scroll;
 
     let items: Vec<ListItem> = entries
       .iter()
       .map(|(name, node)| {
         if name == ".." {
-          let s = "  ../".to_string();
-          ListItem::new(Line::from(clip_str(&s, scroll)))
+          clip_line("  ../".to_string(), h)
         } else {
           match node {
-            Some(DirNode::Dir(_)) => {
-              let s = format!("  {name}/");
-              ListItem::new(Line::from(clip_str(&s, scroll)))
-            }
+            Some(DirNode::Dir(_)) => clip_line(format!("  {name}/"), h),
             Some(DirNode::File(entry)) => {
               let size = format_size(entry.size);
               let date = entry.modified.as_deref().unwrap_or("");
               let line_str = format!("  {name:<35}{size:>10}  {date:<17} {}   ", entry.method);
-              ListItem::new(Line::from(clip_str(&line_str, scroll)))
+              clip_line(line_str, h)
             }
             None => ListItem::new(""),
           }
@@ -213,11 +197,8 @@ impl Tile for FileListTile {
 
     frame.render_stateful_widget(list, area, &mut self.list_state);
 
-    self.update_scrollbar(entry_count);
-    let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-      .begin_symbol(None)
-      .end_symbol(None);
-    frame.render_stateful_widget(sb, area, &mut self.scrollbar_state);
+    let inner = block.inner(area);
+    self.render_scrollbar(area, inner.height as usize, frame, ctx);
   }
 
   fn handle_input(&mut self, event: &InputEvent, ctx: &AppContext) -> Vec<Action> {
@@ -230,9 +211,56 @@ impl Tile for FileListTile {
   fn reset_with_entries(&mut self, _entries: &[ArchiveEntry]) {
     self.current_path.clear();
     self.list_state = ListState::default();
+    self.scroll.reset();
   }
 
   fn handle_action(&mut self, _action: &Action, _ctx: &AppContext) {}
+}
+
+impl Scrollable for FileListTile {
+  fn supports_vertical_scroll(&self) -> bool {
+    true
+  }
+  fn supports_horizontal_scroll(&self) -> bool {
+    true
+  }
+
+  fn scroll_state(&self) -> &ScrollState {
+    &self.scroll
+  }
+  fn scroll_state_mut(&mut self) -> &mut ScrollState {
+    &mut self.scroll
+  }
+
+  fn content_line_count(&self, ctx: &AppContext) -> usize {
+    self.display_entries(ctx).len()
+  }
+
+  fn scroll_up(&mut self, ctx: &AppContext) {
+    let len = self.display_entries(ctx).len();
+    if len == 0 {
+      return;
+    }
+    let new = match self.list_state.selected() {
+      Some(i) => (i as isize - 1).max(0) as usize,
+      None => len - 1,
+    };
+    self.list_state.select(Some(new));
+    self.scroll.v_scroll = new;
+  }
+
+  fn scroll_down(&mut self, ctx: &AppContext) {
+    let len = self.display_entries(ctx).len();
+    if len == 0 {
+      return;
+    }
+    let new = match self.list_state.selected() {
+      Some(i) => ((i as isize + 1).min(len as isize - 1)) as usize,
+      None => 0,
+    };
+    self.list_state.select(Some(new));
+    self.scroll.v_scroll = new;
+  }
 }
 
 impl FileListTile {
@@ -249,18 +277,20 @@ impl FileListTile {
           self.go_up(ctx)
         }
       }
-      KeyCode::Up | KeyCode::Char('k') => self.navigate_list(-1, ctx),
-      KeyCode::Down | KeyCode::Char('j') => self.navigate_list(1, ctx),
+      KeyCode::Up | KeyCode::Char('k') => {
+        self.scroll_up(ctx);
+        self.selection_action(ctx)
+      }
+      KeyCode::Down | KeyCode::Char('j') => {
+        self.scroll_down(ctx);
+        self.selection_action(ctx)
+      }
       KeyCode::PageUp => {
-        for _ in 0..10 {
-          self.navigate_list(-1, ctx);
-        }
+        self.scroll_page_up(ctx);
         self.selection_action(ctx)
       }
       KeyCode::PageDown => {
-        for _ in 0..10 {
-          self.navigate_list(1, ctx);
-        }
+        self.scroll_page_down(ctx);
         self.selection_action(ctx)
       }
       KeyCode::Enter => self.enter_selected(ctx),
@@ -276,11 +306,11 @@ impl FileListTile {
         }
       }
       KeyCode::Left => {
-        self.horizontal_scroll = self.horizontal_scroll.saturating_sub(4);
+        self.scroll_left();
         vec![]
       }
       KeyCode::Right => {
-        self.horizontal_scroll = self.horizontal_scroll.saturating_add(4);
+        self.scroll_right();
         vec![]
       }
       KeyCode::Char('e') => {
@@ -301,25 +331,6 @@ impl FileListTile {
       }
       _ => vec![],
     }
-  }
-
-  fn navigate_list(&mut self, delta: isize, ctx: &AppContext) -> Vec<Action> {
-    let len = self.display_entries(ctx).len();
-    if len == 0 {
-      return vec![];
-    }
-    let new = match self.list_state.selected() {
-      Some(i) => (i as isize + delta).clamp(0, len as isize - 1) as usize,
-      None => {
-        if delta < 0 {
-          len - 1
-        } else {
-          0
-        }
-      }
-    };
-    self.list_state.select(Some(new));
-    self.selection_action(ctx)
   }
 
   fn enter_selected(&mut self, ctx: &AppContext) -> Vec<Action> {
@@ -372,20 +383,29 @@ impl FileListTile {
           return self.enter_selected(ctx);
         }
         self.list_state.select(Some(y));
+        self.scroll.v_scroll = y;
         self.selection_action(ctx)
       }
-      MouseEventKind::ScrollUp => self.navigate_list(-1, ctx),
-      MouseEventKind::ScrollDown => self.navigate_list(1, ctx),
+      MouseEventKind::ScrollUp => {
+        self.scroll_up(ctx);
+        self.selection_action(ctx)
+      }
+      MouseEventKind::ScrollDown => {
+        self.scroll_down(ctx);
+        self.selection_action(ctx)
+      }
       _ => vec![],
     }
   }
 }
 
-fn clip_str(s: &str, scroll: usize) -> String {
+fn clip_line(s: String, scroll: usize) -> ListItem<'static> {
   if scroll == 0 {
-    return s.to_string();
+    ListItem::new(Line::from(s))
+  } else {
+    let clipped: String = s.chars().skip(scroll).collect();
+    ListItem::new(Line::from(clipped))
   }
-  s.chars().skip(scroll).collect()
 }
 
 pub fn format_size(bytes: u64) -> String {
