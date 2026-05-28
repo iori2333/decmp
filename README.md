@@ -88,7 +88,7 @@ Mouse is supported: click to select/enter, scroll wheel to navigate.
 ## Build from source
 
 ```bash
-git clone https://github.com/anomalyco/decmp.git
+git clone https://github.com/iori2333/decmp.git
 cd decmp
 cargo build --workspace --release
 ```
