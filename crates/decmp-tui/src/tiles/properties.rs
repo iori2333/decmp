@@ -46,11 +46,12 @@ impl Tile for PropertiesTile {
 
     let inner = block.inner(area);
     let visible = inner.height as usize;
-    self.scroll.v_scroll = self.scroll.v_scroll.min(6usize.saturating_sub(visible));
-    let start = self.scroll.v_scroll;
-    let end = (start + visible).min(6);
 
     if let Some(ref entry) = self.selected_entry {
+      let line_count: usize = 6;
+      self.scroll.v_scroll = self.scroll.v_scroll.min(line_count.saturating_sub(visible));
+      let start = self.scroll.v_scroll;
+      let end = (start + visible).min(line_count);
       let type_str = if entry.is_dir { "Dir" } else { "File" };
       let date = entry.modified.as_deref().unwrap_or("-").to_string();
       let size_str = format_size(entry.size);
@@ -66,6 +67,10 @@ impl Tile for PropertiesTile {
       let visible_lines: Vec<Line> = all_lines[start..end].to_vec();
       frame.render_widget(Paragraph::new(visible_lines).block(block.clone()), area);
     } else {
+      let line_count: usize = 7;
+      self.scroll.v_scroll = self.scroll.v_scroll.min(line_count.saturating_sub(visible));
+      let start = self.scroll.v_scroll;
+      let end = (start + visible).min(line_count);
       let total_entries = ctx.archive.entries.len();
       let files = ctx.archive.entries.iter().filter(|e| !e.is_dir).count();
       let dirs = total_entries - files;
@@ -83,8 +88,10 @@ impl Tile for PropertiesTile {
       let total_size_str = format_size(total_size);
       let total_comp_str = format_size(total_comp);
 
+      let format_str = ctx.archive.format.to_string();
       let all_lines = [
         prop_line("Archive:", &archive_name, dim),
+        prop_line("Format: ", &format_str, dim),
         prop_line("Entries:", &entries_str, dim),
         prop_line("Files:  ", &files_str, dim),
         prop_line("Dirs:   ", &dirs_str, dim),
@@ -178,7 +185,7 @@ impl Scrollable for PropertiesTile {
   }
 
   fn content_line_count(&self, _ctx: &AppContext) -> usize {
-    6
+    if self.selected_entry.is_some() { 6 } else { 7 }
   }
 }
 

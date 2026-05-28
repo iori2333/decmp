@@ -42,9 +42,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let handler = get_handler(&format);
 
   let mut app = match handler.list(&archive_path, None, None) {
-    Ok(entries) => app::App::new(archive_path, handler, entries),
+    Ok(entries) => app::App::new(archive_path, handler, format, entries),
     Err(DecmpError::PasswordRequired) | Err(DecmpError::WrongPassword) => {
-      app::App::new_password_required(archive_path, handler)
+      app::App::new_password_required(archive_path, handler, format)
     }
     Err(e) => {
       eprintln!("Error: {e}");

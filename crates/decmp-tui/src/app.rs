@@ -28,6 +28,7 @@ impl App {
   pub fn new(
     archive_path: PathBuf,
     handler: Box<dyn decmp_core::ArchiveHandler>,
+    format: decmp_core::Format,
     mut entries: Vec<decmp_core::ArchiveEntry>,
   ) -> Self {
     normalize_entry_names(&mut entries);
@@ -39,6 +40,7 @@ impl App {
         handler,
         entries: entries.clone(),
         tree,
+        format,
       },
       focus: TileId::FileList,
       password: None,
@@ -81,8 +83,9 @@ impl App {
   pub fn new_password_required(
     archive_path: PathBuf,
     handler: Box<dyn decmp_core::ArchiveHandler>,
+    format: decmp_core::Format,
   ) -> Self {
-    let mut app = Self::new(archive_path, handler, Vec::new());
+    let mut app = Self::new(archive_path, handler, format, Vec::new());
     app.ctx.mode = Mode::Password;
     app.ctx.pending_action = Some(PendingAction::InitialLoad);
     app.ctx.status_msg = Some("Password required to open archive".to_string());

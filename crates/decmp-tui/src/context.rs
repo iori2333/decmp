@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ratatui::text::Span;
 
-use decmp_core::{ArchiveEntry, ArchiveHandler};
+use decmp_core::{ArchiveEntry, ArchiveHandler, Format};
 
 use crate::tile::TileId;
 use crate::tree::DirTree;
@@ -85,6 +85,7 @@ pub struct ArchiveState {
   pub handler: Box<dyn ArchiveHandler>,
   pub entries: Vec<ArchiveEntry>,
   pub tree: DirTree,
+  pub format: Format,
 }
 
 pub struct AppContext {

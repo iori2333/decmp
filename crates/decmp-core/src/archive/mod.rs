@@ -7,6 +7,7 @@ pub mod xz;
 pub mod zip;
 pub mod zstd;
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::error::{DecmpError, Result};
@@ -80,7 +81,71 @@ impl std::str::FromStr for Format {
   }
 }
 
-pub fn detect_format(path: &Path) -> Result<Format> {
+const MAGIC_READ_SIZE: usize = 264;
+
+fn read_magic(path: &Path) -> Result<Vec<u8>> {
+  let mut file = std::fs::File::open(path)?;
+  let mut buf = vec![0u8; MAGIC_READ_SIZE];
+  let n = file.read(&mut buf)?;
+  buf.truncate(n);
+  Ok(buf)
+}
+
+fn detect_from_magic(bytes: &[u8]) -> Option<Format> {
+  if bytes.is_empty() {
+    return None;
+  }
+  if bytes.len() >= 6 && &bytes[0..6] == b"\x37\x7A\xBC\xAF\x27\x1C" {
+    return Some(Format::SevenZ);
+  }
+  if bytes.len() >= 6 && &bytes[0..6] == b"Rar!\x1A\x07" {
+    return Some(Format::Rar);
+  }
+  if bytes.len() >= 4 && &bytes[0..4] == b"PK\x03\x04" {
+    return Some(Format::Zip);
+  }
+  if bytes.len() >= 6 && &bytes[0..6] == b"\xFD\x37\x7A\x58\x5A\x00" {
+    return Some(Format::Xz);
+  }
+  if bytes.len() >= 4 && &bytes[0..4] == b"\x28\xB5\x2F\xFD" {
+    return Some(Format::Zst);
+  }
+  if bytes.len() >= 2 && bytes[0] == 0x1F && bytes[1] == 0x8B {
+    return Some(Format::Gz);
+  }
+  if bytes.len() >= 3 && &bytes[0..3] == b"BZh" {
+    return Some(Format::Bz2);
+  }
+  if bytes.len() >= 3 && bytes[0] == 0x5D && bytes[1] == 0x00 && bytes[2] == 0x00 {
+    return Some(Format::Lzma);
+  }
+  if bytes.len() > 262 && &bytes[257..262] == b"ustar" {
+    return Some(Format::Tar);
+  }
+  None
+}
+
+fn resolve_format(base: Format, path: &Path) -> Format {
+  let name = path
+    .file_name()
+    .map(|n| n.to_string_lossy().to_lowercase())
+    .unwrap_or_default();
+
+  match &base {
+    Format::Gz if name.ends_with(".tar.gz") || name.ends_with(".tgz") => Format::TarGz,
+    Format::Xz if name.ends_with(".tar.xz") || name.ends_with(".txz") => Format::TarXz,
+    Format::Zst if name.ends_with(".tar.zst") || name.ends_with(".tar.zstd") => Format::TarZst,
+    Format::Bz2
+      if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") || name.ends_with(".tbz") =>
+    {
+      Format::TarBz2
+    }
+    Format::Lzma if name.ends_with(".tar.lzma") => Format::TarLzma,
+    _ => base,
+  }
+}
+
+fn detect_format_by_extension(path: &Path) -> Result<Format> {
   let name = path
     .file_name()
     .ok_or_else(|| DecmpError::UnsupportedFormat("empty filename".into()))?
@@ -119,6 +184,17 @@ pub fn detect_format(path: &Path) -> Result<Format> {
     None => Err(DecmpError::UnsupportedFormat(
       "no file extension".to_string(),
     )),
+  }
+}
+
+pub fn detect_format(path: &Path) -> Result<Format> {
+  match read_magic(path) {
+    Ok(bytes) => {
+      let base = detect_from_magic(&bytes)
+        .ok_or_else(|| DecmpError::UnsupportedFormat("unrecognized file header".into()))?;
+      Ok(resolve_format(base, path))
+    }
+    Err(_) => detect_format_by_extension(path),
   }
 }
 
@@ -295,82 +371,147 @@ pub fn get_handler(format: &Format) -> Box<dyn ArchiveHandler> {
 mod tests {
   use super::*;
 
+  fn make_file(dir: &std::path::Path, name: &str, magic: &[u8]) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, magic).unwrap();
+    path
+  }
+
+  fn make_ustar_file(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    let mut buf = vec![0u8; 512];
+    buf[257..262].copy_from_slice(b"ustar");
+    std::fs::write(&path, buf).unwrap();
+    path
+  }
+
   #[test]
   fn test_detect_format_zip() {
-    assert_eq!(detect_format(Path::new("test.zip")).unwrap(), Format::Zip);
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "test.zip", b"PK\x03\x04");
+    assert_eq!(detect_format(&p).unwrap(), Format::Zip);
   }
 
   #[test]
   fn test_detect_format_tar_gz() {
-    assert_eq!(
-      detect_format(Path::new("archive.tar.gz")).unwrap(),
-      Format::TarGz
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "archive.tar.gz", b"\x1F\x8B");
+    assert_eq!(detect_format(&p).unwrap(), Format::TarGz);
   }
 
   #[test]
   fn test_detect_format_tgz() {
-    assert_eq!(
-      detect_format(Path::new("archive.tgz")).unwrap(),
-      Format::TarGz
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "archive.tgz", b"\x1F\x8B");
+    assert_eq!(detect_format(&p).unwrap(), Format::TarGz);
   }
 
   #[test]
   fn test_detect_format_tar_xz() {
-    assert_eq!(
-      detect_format(Path::new("archive.tar.xz")).unwrap(),
-      Format::TarXz
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "archive.tar.xz", b"\xFD\x37\x7A\x58\x5A\x00");
+    assert_eq!(detect_format(&p).unwrap(), Format::TarXz);
   }
 
   #[test]
   fn test_detect_format_tar_zst() {
-    assert_eq!(
-      detect_format(Path::new("archive.tar.zst")).unwrap(),
-      Format::TarZst
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "archive.tar.zst", b"\x28\xB5\x2F\xFD");
+    assert_eq!(detect_format(&p).unwrap(), Format::TarZst);
   }
 
   #[test]
   fn test_detect_format_tar_bz2() {
-    assert_eq!(
-      detect_format(Path::new("archive.tar.bz2")).unwrap(),
-      Format::TarBz2
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "archive.tar.bz2", b"BZh9");
+    assert_eq!(detect_format(&p).unwrap(), Format::TarBz2);
   }
 
   #[test]
   fn test_detect_format_tar_lzma() {
-    assert_eq!(
-      detect_format(Path::new("archive.tar.lzma")).unwrap(),
-      Format::TarLzma
-    );
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "archive.tar.lzma", b"\x5D\x00\x00");
+    assert_eq!(detect_format(&p).unwrap(), Format::TarLzma);
   }
 
   #[test]
   fn test_detect_format_7z() {
-    assert_eq!(detect_format(Path::new("test.7z")).unwrap(), Format::SevenZ);
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "test.7z", b"\x37\x7A\xBC\xAF\x27\x1C");
+    assert_eq!(detect_format(&p).unwrap(), Format::SevenZ);
+  }
+
+  #[test]
+  fn test_detect_format_rar() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "test.rar", b"Rar!\x1A\x07\x00");
+    assert_eq!(detect_format(&p).unwrap(), Format::Rar);
+  }
+
+  #[test]
+  fn test_detect_format_tar_uncompressed() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_ustar_file(dir.path(), "archive.tar");
+    assert_eq!(detect_format(&p).unwrap(), Format::Tar);
   }
 
   #[test]
   fn test_detect_format_single_gz() {
-    assert_eq!(detect_format(Path::new("file.txt.gz")).unwrap(), Format::Gz);
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "file.txt.gz", b"\x1F\x8B");
+    assert_eq!(detect_format(&p).unwrap(), Format::Gz);
+  }
+
+  #[test]
+  fn test_detect_format_single_xz() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "file.xz", b"\xFD\x37\x7A\x58\x5A\x00");
+    assert_eq!(detect_format(&p).unwrap(), Format::Xz);
   }
 
   #[test]
   fn test_detect_format_single_zst() {
-    assert_eq!(detect_format(Path::new("file.zst")).unwrap(), Format::Zst);
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "file.zst", b"\x28\xB5\x2F\xFD");
+    assert_eq!(detect_format(&p).unwrap(), Format::Zst);
   }
 
   #[test]
-  fn test_detect_format_unsupported() {
+  fn test_detect_format_single_bz2() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "file.bz2", b"BZh9");
+    assert_eq!(detect_format(&p).unwrap(), Format::Bz2);
+  }
+
+  #[test]
+  fn test_detect_format_single_lzma() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "file.lzma", b"\x5D\x00\x00");
+    assert_eq!(detect_format(&p).unwrap(), Format::Lzma);
+  }
+
+  #[test]
+  fn test_detect_format_unrecognized_magic() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "file.xyz", b"garbage data");
+    assert!(detect_format(&p).is_err());
+  }
+
+  #[test]
+  fn test_detect_format_no_extension_fallback() {
+    assert!(detect_format(Path::new("noext")).is_err());
+  }
+
+  #[test]
+  fn test_detect_format_unsupported_fallback() {
     assert!(detect_format(Path::new("file.xyz")).is_err());
   }
 
   #[test]
-  fn test_detect_format_no_extension() {
-    assert!(detect_format(Path::new("noext")).is_err());
+  fn test_detect_format_empty_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = make_file(dir.path(), "empty.zip", b"");
+    assert!(detect_format(&p).is_err());
   }
 
   #[test]
